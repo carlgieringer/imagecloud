@@ -8,14 +8,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 from scipy.ndimage import gaussian_gradient_magnitude
-from skimage import feature
+from skimage import feature, morphology
 from wordcloud import WordCloud, ImageColorGenerator, STOPWORDS
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(
     format='%(asctime)s %(levelname)-8s %(message)s',
     level=logging.WARNING,
-    datefmt='%Y-%m-%d %H:%M:%S')
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 _logger = logging.getLogger(__name__)
 
 parser = argparse.ArgumentParser(description="Generate a word cloud")
@@ -38,6 +39,8 @@ parser.add_argument("--relative-scaling", type=float, default=0.5,
 parser.add_argument("--no-plot", action="store_true", default=False, help="skip plotting")
 parser.add_argument("--log-level", default=logging.INFO, help="log level (DEBUG, INFO, WARNING, or ERROR)")
 parser.add_argument("--edge-strategy", choices=("gaussian", "canny"), default="canny", help="how to detect edges")
+parser.add_argument("--small-object-size", type=int, default=None, help="size in pixels of small objects to remove from"
+                                                                        " edge detection")
 
 _ALPHA_TRANSPARENT = 0
 _MASK_EXCLUDE = 255
@@ -58,6 +61,7 @@ def do_wordcloud(
         relative_scaling=0.5,
         do_plot=True,
         edge_strategy="canny",
+        small_object_size=None,
 ):
     """
     :param text_path: path to file containing text
@@ -75,6 +79,7 @@ def do_wordcloud(
                              completely frequency.
     :param do_plot: whether to show informative plots in addition to saving image
     :param edge_strategy: how to detect edges: gaussian or canny
+    :param small_object_size: the size in pixels of small objects to remove from edge detection.
     """
 
     text = open(text_path).read()
@@ -84,6 +89,7 @@ def do_wordcloud(
     if len(image_data.shape) < 3:
         raise Exception("image_data needs three dimensions. (did you provice a color image?)")
     if downsample_ratio != 1:
+        _logger.debug("downsampling by %d", downsample_ratio)
         image_data = image_data[::downsample_ratio, ::downsample_ratio]
 
     # create mask  white is "masked out"
@@ -97,6 +103,10 @@ def do_wordcloud(
             edges = np.mean([gaussian_gradient_magnitude(image_data[:, :, i] / 255., edge_sigma) for i in range(3)], axis=0)
         elif edge_strategy == "canny":
             edges = np.mean([feature.canny(image_data[:, :, i] / 255., sigma=edge_sigma) for i in range(3)], axis=0)
+            if small_object_size:
+                _logger.debug("removing objects smaller than %d pixels", small_object_size)
+                without_objects = morphology.remove_small_objects(edges > edge_threshold, small_object_size)
+                edges = without_objects.astype(int) * edges
         _logger.debug("calculated edges")
 
         mask[edges > edge_threshold] = _MASK_EXCLUDE
@@ -179,4 +189,5 @@ if __name__ == "__main__":
         relative_scaling=args.relative_scaling,
         do_plot=not args.no_plot,
         edge_strategy=args.edge_strategy,
+        small_object_size=args.small_object_size,
     )
