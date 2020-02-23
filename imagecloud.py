@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import warnings
 from pathlib import Path
@@ -10,6 +11,11 @@ from scipy.ndimage import gaussian_gradient_magnitude
 from wordcloud import WordCloud, ImageColorGenerator, STOPWORDS
 
 warnings.filterwarnings("ignore")
+logging.basicConfig(
+    format='%(asctime)s %(levelname)-8s %(message)s',
+    level=logging.WARNING,
+    datefmt='%Y-%m-%d %H:%M:%S')
+_logger = logging.getLogger(__name__)
 
 parser = argparse.ArgumentParser(description="Generate a word cloud")
 parser.add_argument("--text-path", required=True, help="path to a file containing text")
@@ -17,7 +23,7 @@ parser.add_argument("--image-path", required=True, help="path to a file containi
 parser.add_argument("--output-path", default="output/imagecloud.png", help="path to a output the word cloud image")
 parser.add_argument("--downsample", type=int, default=1, help="amount by which to divide input image's pixels")
 parser.add_argument("--seed", type=int, default=None, help="randomness seed")
-parser.add_argument("--no-detect-edges", action='store_true', default=False, help="whether to skip edge detection")
+parser.add_argument("--no-detect-edges", action='store_true', default=False, help="skip edge detection")
 parser.add_argument("--edge-sigma", type=float, default=2,
                     help="standard deviations of the Gaussian filter used for edge detection")
 parser.add_argument("--edge-threshold", type=float, default=0.08,
@@ -28,10 +34,12 @@ parser.add_argument("--max-words", type=int, default=200, help="maximum number o
 parser.add_argument("--relative-scaling", type=float, default=0.5,
                     help="relative importance of frequency vs. rank for word size.  0 is completely rank.  1 is"
                          "completely frequency.")
-
+parser.add_argument("--no-plot", action="store_true", default=False, help="skip plotting")
+parser.add_argument("--log-level", default=logging.INFO, help="log level (DEBUG, INFO, WARNING, or ERROR)")
 
 _ALPHA_TRANSPARENT = 0
 _MASK_EXCLUDE = 255
+
 
 def do_wordcloud(
         text_path,
@@ -46,6 +54,7 @@ def do_wordcloud(
         max_font_size=None,
         max_words=200,
         relative_scaling=0.5,
+        do_plot=True,
 ):
     """
     :param text_path: path to file containing text
@@ -62,29 +71,29 @@ def do_wordcloud(
     :param relative_scaling: relative importance of frequency vs. rank for word size.  0 is completely rank.  1 is
                              completely frequency.
     """
-    
+
     text = open(text_path).read()
-    
+
     image = Image.open(image_path)
     image_data = np.array(image)
     if len(image_data.shape) < 3:
         raise Exception("image_data needs three dimensions. (did you provice a color image?)")
     if downsample_ratio != 1:
         image_data = image_data[::downsample_ratio, ::downsample_ratio]
-    
+
     # create mask  white is "masked out"
     mask = image_data.copy()
     mask[mask.sum(axis=2) == _ALPHA_TRANSPARENT] = _MASK_EXCLUDE
-    
+
     edges = None
     if do_detect_edges:
         # some finesse: we enforce boundaries between colors so they get less washed out.
         # For that we do some edge detection in the image
         edges = np.mean([gaussian_gradient_magnitude(image_data[:, :, i] / 255., edge_sigma) for i in range(3)], axis=0)
         mask[edges > edge_threshold] = _MASK_EXCLUDE
-    
+
     stopwords = STOPWORDS if extra_stopwords is None else STOPWORDS | set(extra_stopwords.split(","))
-    
+
     wc = WordCloud(
         max_words=max_words,
         mask=mask,
@@ -96,37 +105,56 @@ def do_wordcloud(
         mode="RGBA",
         stopwords=stopwords,
     )
-    
-    # generate word cloud
+
+    _logger.debug("generating word cloud")
     wc.generate(text)
-    plt.title("Masked")
-    plt.imshow(wc)
-    
+    _logger.debug("generated word cloud")
+
+    if do_plot:
+        plt.title("WordCloud")
+        _logger.debug("plotting WordCloud")
+        plt.imshow(wc)
+
     # create coloring from image
     image_colors = ImageColorGenerator(image_data)
     wc.recolor(color_func=image_colors)
-    plt.figure(figsize=(10, 10))
-    plt.title("Recolored")
-    plt.imshow(wc, interpolation="bilinear")
 
     output_dir = os.path.dirname(output_path)
     Path(output_dir).mkdir(parents=True, exist_ok=True)
+    _logger.debug("writing file")
     wc.to_file(output_path)
-    
-    plt.figure(figsize=(10, 10))
-    plt.title("Original Image")
-    plt.imshow(image_data)
-    
-    if edges is not None:
+
+    if do_plot:
         plt.figure(figsize=(10, 10))
-        plt.title("Edge map")
-        plt.imshow(edges)
-    
-    plt.show()
+        plt.title("WordCloud Recolored")
+        _logger.debug("plotting WordCloud Recolored")
+        plt.imshow(wc, interpolation="bilinear")
+
+        plt.figure(figsize=(10, 10))
+        plt.title("Original Image")
+        _logger.debug("plotting Original Image")
+        plt.imshow(image_data)
+
+        plt.figure(figsize=(10, 10))
+        plt.title("Mask")
+        _logger.debug("plotting Mask")
+        plt.imshow(mask)
+
+        if edges is not None:
+            plt.figure(figsize=(10, 10))
+            plt.title("Edges")
+            _logger.debug("plotting Edges")
+            plt.imshow(edges)
+
+        _logger.debug("showing plot")
+        plt.show()
 
 
 if __name__ == "__main__":
     args = parser.parse_args()
+
+    _logger.setLevel(logging.getLevelName(args.log_level))
+
     do_wordcloud(
         text_path=args.text_path,
         image_path=args.image_path,
@@ -140,4 +168,5 @@ if __name__ == "__main__":
         max_font_size=args.max_font_size,
         max_words=args.max_words,
         relative_scaling=args.relative_scaling,
+        do_plot=not args.no_plot,
     )
