@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 from scipy.ndimage import gaussian_gradient_magnitude
+from skimage import feature
 from wordcloud import WordCloud, ImageColorGenerator, STOPWORDS
 
 warnings.filterwarnings("ignore")
@@ -36,6 +37,7 @@ parser.add_argument("--relative-scaling", type=float, default=0.5,
                          "completely frequency.")
 parser.add_argument("--no-plot", action="store_true", default=False, help="skip plotting")
 parser.add_argument("--log-level", default=logging.INFO, help="log level (DEBUG, INFO, WARNING, or ERROR)")
+parser.add_argument("--edge-strategy", choices=("gaussian", "canny"), default="canny", help="how to detect edges")
 
 _ALPHA_TRANSPARENT = 0
 _MASK_EXCLUDE = 255
@@ -55,6 +57,7 @@ def do_wordcloud(
         max_words=200,
         relative_scaling=0.5,
         do_plot=True,
+        edge_strategy="canny",
 ):
     """
     :param text_path: path to file containing text
@@ -70,6 +73,8 @@ def do_wordcloud(
     :param max_words: maximum number of words
     :param relative_scaling: relative importance of frequency vs. rank for word size.  0 is completely rank.  1 is
                              completely frequency.
+    :param do_plot: whether to show informative plots in addition to saving image
+    :param edge_strategy: how to detect edges: gaussian or canny
     """
 
     text = open(text_path).read()
@@ -87,9 +92,13 @@ def do_wordcloud(
 
     edges = None
     if do_detect_edges:
-        # some finesse: we enforce boundaries between colors so they get less washed out.
-        # For that we do some edge detection in the image
-        edges = np.mean([gaussian_gradient_magnitude(image_data[:, :, i] / 255., edge_sigma) for i in range(3)], axis=0)
+        _logger.debug("calculating edges")
+        if edge_strategy == "gaussian":
+            edges = np.mean([gaussian_gradient_magnitude(image_data[:, :, i] / 255., edge_sigma) for i in range(3)], axis=0)
+        elif edge_strategy == "canny":
+            edges = np.mean([feature.canny(image_data[:, :, i] / 255., sigma=edge_sigma) for i in range(3)], axis=0)
+        _logger.debug("calculated edges")
+
         mask[edges > edge_threshold] = _MASK_EXCLUDE
 
     stopwords = STOPWORDS if extra_stopwords is None else STOPWORDS | set(extra_stopwords.split(","))
@@ -169,4 +178,5 @@ if __name__ == "__main__":
         max_words=args.max_words,
         relative_scaling=args.relative_scaling,
         do_plot=not args.no_plot,
+        edge_strategy=args.edge_strategy,
     )
